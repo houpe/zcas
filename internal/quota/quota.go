@@ -55,6 +55,8 @@ type Overview struct {
 	Items       []Item           `json:"items"`
 	CodingPlan  *CodingPlanUsage `json:"codingPlan,omitempty"`
 	ResetCards  *ResetCards      `json:"resetCards,omitempty"`
+	// Weekly 周额度日均消耗统计（本地采样，TrackWeekly 填充）。
+	Weekly      *WeeklyStats     `json:"weekly,omitempty"`
 	RefreshedAt int64            `json:"refreshedAt"`
 }
 

@@ -344,6 +344,72 @@ export namespace quota {
 	        this.periodEnd = source["periodEnd"];
 	    }
 	}
+	export class WeeklyHistoryStat {
+	    cycles: number;
+	    dailyPercent: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new WeeklyHistoryStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cycles = source["cycles"];
+	        this.dailyPercent = source["dailyPercent"];
+	    }
+	}
+	export class WeeklyCurrentStat {
+	    start: number;
+	    end: number;
+	    daysElapsed: number;
+	    percent: number;
+	    dailyPercent: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new WeeklyCurrentStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.start = source["start"];
+	        this.end = source["end"];
+	        this.daysElapsed = source["daysElapsed"];
+	        this.percent = source["percent"];
+	        this.dailyPercent = source["dailyPercent"];
+	    }
+	}
+	export class WeeklyStats {
+	    current?: WeeklyCurrentStat;
+	    historical?: WeeklyHistoryStat;
+	
+	    static createFrom(source: any = {}) {
+	        return new WeeklyStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.current = this.convertValues(source["current"], WeeklyCurrentStat);
+	        this.historical = this.convertValues(source["historical"], WeeklyHistoryStat);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ResetCardGroup {
 	    count: number;
 	    earliestExpiry?: number;
@@ -416,6 +482,7 @@ export namespace quota {
 	    items: Item[];
 	    codingPlan?: CodingPlanUsage;
 	    resetCards?: ResetCards;
+	    weekly?: WeeklyStats;
 	    refreshedAt: number;
 	
 	    static createFrom(source: any = {}) {
@@ -433,6 +500,7 @@ export namespace quota {
 	        this.items = this.convertValues(source["items"], Item);
 	        this.codingPlan = this.convertValues(source["codingPlan"], CodingPlanUsage);
 	        this.resetCards = this.convertValues(source["resetCards"], ResetCards);
+	        this.weekly = this.convertValues(source["weekly"], WeeklyStats);
 	        this.refreshedAt = source["refreshedAt"];
 	    }
 	
@@ -454,6 +522,9 @@ export namespace quota {
 		    return a;
 		}
 	}
+	
+	
+	
 	
 	
 

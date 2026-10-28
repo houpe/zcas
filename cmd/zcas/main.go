@@ -253,6 +253,7 @@ func cmdRm(args []string) error {
 	if err := store.Delete(id); err != nil {
 		return err
 	}
+	quota.ForgetWeekly(id)
 	fmt.Println("✓ 已删除账号", id)
 	return nil
 }
@@ -305,6 +306,7 @@ func cmdQuota(args []string) error {
 	args = rest
 	var tokens []string
 	var cred map[string]any
+	var accountKey string
 	var whom string
 	if len(args) == 0 {
 		var err error
@@ -313,6 +315,7 @@ func cmdQuota(args []string) error {
 			return err
 		}
 		cred, _, _ = store.ReadLive()
+		accountKey = quota.AccountKey(cred, secret)
 		whom = "当前账号"
 	} else {
 		id, err := store.Resolve(args[0])
@@ -325,6 +328,7 @@ func cmdQuota(args []string) error {
 		}
 		tokens = quota.TokensFromSnapshot(snap, secret)
 		cred = quota.CredMapFromSnapshot(snap)
+		accountKey = meta.ID
 		whom = meta.Label
 	}
 	if raw {
@@ -353,6 +357,7 @@ func cmdQuota(args []string) error {
 			it.Name, human(it.Total), human(it.Used), human(it.Remaining), percent(it.PercentUsed))
 	}
 	quota.EnrichCodingPlan(ov, cred, secret)
+	quota.TrackWeekly(accountKey, ov)
 	if cp := ov.CodingPlan; cp != nil {
 		label := cp.ProductName
 		if label == "" {
@@ -368,6 +373,17 @@ func cmdQuota(args []string) error {
 		for i := range cp.Limits {
 			l := &cp.Limits[i]
 			fmt.Printf("  - %-8s 已用 %s / 限额 %s（%d%%）\n", l.Name, human(&l.Used), human(&l.Limit), l.Percent)
+		}
+	}
+	if w := ov.Weekly; w != nil {
+		if w.Current != nil {
+			fmt.Printf("  - 周额度日均(本次): %.2f%%/天（已用 %d%% / 第 %.1f 天，重置 %s）\n",
+				w.Current.DailyPercent, int(w.Current.Percent), w.Current.DaysElapsed,
+				time.UnixMilli(w.Current.End).Format("01-02 15:04"))
+		}
+		if w.Historical != nil {
+			fmt.Printf("  - 周额度日均(历史): %.2f%%/天（近 %d 个完整周期）\n",
+				w.Historical.DailyPercent, w.Historical.Cycles)
 		}
 	}
 	return nil

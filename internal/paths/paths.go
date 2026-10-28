@@ -39,3 +39,6 @@ func ConfigPath() string { return filepath.Join(DataDir(), "config.json") }
 
 // HealthFile 账号会话健康状态缓存文件。
 func HealthFile() string { return filepath.Join(DataDir(), "health.json") }
+
+// QuotaHistoryFile 周额度采样历史文件（日均消耗统计用）。
+func QuotaHistoryFile() string { return filepath.Join(DataDir(), "quota-history.json") }

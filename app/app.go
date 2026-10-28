@@ -439,6 +439,7 @@ func (a *App) DeleteAccount(id string) error {
 		return err
 	}
 	session.Forget(id)
+	quota.ForgetWeekly(id)
 	return nil
 }
 
@@ -475,6 +476,12 @@ func (a *App) GetQuota(id string) (*quota.Overview, error) {
 	}
 	quota.EnrichCodingPlan(ov, cred, secret)
 	quota.EnrichResetCards(ov, cred, secret)
+	// 周额度日均消耗：采样进本地历史并计算本次/历史两个指标（静默，不影响主流程）
+	key := id
+	if key == "" {
+		key = quota.AccountKey(cred, secret)
+	}
+	quota.TrackWeekly(key, ov)
 	return ov, nil
 }
 
