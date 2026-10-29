@@ -301,32 +301,24 @@ body {
     font-weight: 600;
     font-size: 14px;
     cursor: default;
-}
-
-.row-meta {
-    color: #8b949e;
-    font-size: 12px;
-    margin-top: 5px;
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    flex-wrap: nowrap;
-    overflow: hidden;
-}
-
-.meta-provider {
-    color: #c9d1d9;
-}
-
-.meta-id {
-    color: #6e7681;
-}
-
-.meta-note {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    min-width: 0;
+    min-width: 0; /* flex 子项收缩时省略号生效 */
+}
+
+/* 名字后的元信息图标（!）：悬停显示渠道/ID/抓取/保鲜/备注说明 */
+.meta-info {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 2px;
+    color: #6e7681;
+    cursor: help;
+}
+
+.meta-info:hover,
+.meta-info:focus-visible {
+    color: #c9d1d9;
 }
 
 /* 操作按钮固定右上角，不随额度内容多少移动 */
@@ -368,7 +360,7 @@ body {
 }
 
 .quota-reset-cards {
-    margin-top: 6px;
+    margin-top: 10px; /* 与限额组拉开，形成组间节奏 */
 }
 
 .quota-row {
@@ -383,6 +375,10 @@ body {
     border: 1px solid rgba(210, 153, 34, 0.4);
     border-radius: 4px;
     padding: 0 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 260px; /* 长套餐名省略，防止撑破行 */
 }
 
 /* 关键数字 */
@@ -403,7 +399,7 @@ body {
 .pct-bar {
     display: inline-block;
     width: 60px;
-    height: 5px;
+    height: 6px;
     margin-left: 6px;
     vertical-align: middle;
     background: #21262d;
@@ -436,14 +432,35 @@ body {
     text-align: right;
 }
 
-/* Coding Plan 限额：单容器 grid，列宽跨行共享（名称 | 已用/总量 | 百分比 | 重置时间 | 周日均） */
+/* 限额区：两行网格 + 右侧日均汇总位（水平排布，汇总位垂直居中）；
+   窄窗时允许汇总位换行到网格下方（见下方媒体查询） */
+.quota-limits-wrap {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 8px; /* 与套餐行拉开，形成组间节奏 */
+}
+
+/* Coding Plan 限额网格：全局统一列宽（名称 | 数值150 右对齐 | 百分比100 | 重置），
+   所有账号块共用同一模板 → 数字/百分比/进度条/倒计时跨块纵向对齐；
+   组内行距收紧 */
 .quota-limits {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto 110px minmax(118px, auto) auto;
-    column-gap: 12px;
-    row-gap: 4px;
+    grid-template-columns: max-content 150px 100px auto;
+    column-gap: 10px;
+    row-gap: 3px;
     align-items: baseline;
-    margin-top: 4px;
+}
+
+/* 隐藏数值列时切换 3 列模板（名称 | 百分比 | 重置） */
+.quota-limits-no-num {
+    grid-template-columns: max-content 100px auto;
+}
+
+.quota-limit-usage {
+    text-align: right; /* 数字右对齐：各行的已用/总量右缘对齐成列 */
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
 .quota-limit-usage b {
@@ -451,33 +468,107 @@ body {
     font-weight: 600;
 }
 
+/* 百分比+进度条成组左对齐（列宽即内容宽，无死空）；主数字放大成行内视觉锚点 */
 .quota-limit-pct {
     display: flex;
     align-items: center;
     gap: 6px;
-    justify-content: flex-end;
+}
+
+.quota-limit-pct b {
+    font-size: 14px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    width: 40px; /* 定宽右对齐：百分号成列，进度条起点全行对齐 */
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
 }
 
 .quota-limit-pct .pct-bar {
-    margin-left: 0; /* flex gap 已提供间距 */
+    margin-left: 0; /* flex gap 已提供间距，避免与全局 margin 叠加 */
+}
+
+/* 周额度日均汇总位：竖排指标，垂直居中于限额组，虚线分隔标记派生结论；
+   可点击打开周期统计弹窗。数值放大着色做强调（字重/字号分层，不用色块） */
+.quota-daily {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-left: 18px;
+    padding-left: 14px;
+    border-left: 1px dashed #30363d;
+    color: #8b949e;
+    white-space: nowrap;
+    align-self: center;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+}
+
+.quota-daily .dv-label {
+    display: inline-block;
+    min-width: 52px; /* 标签定宽，三行数值纵向对齐 */
+    margin-right: 4px; /* 窄窗横排时标签与数字不粘连 */
+    font-size: 12px;
+}
+
+.quota-daily b {
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    transition: color 0.15s;
+}
+
+/* 本次=当前节奏（主题蓝）· 预计本周=预算判定（绿/黄/红阈值着色，随 pctClass）· 均每周=历史基线（亮白） */
+.quota-daily .dv-cur {
+    color: #58a6ff;
+}
+
+.quota-daily .dv-avg {
+    color: #e6edf3;
+}
+
+.quota-daily:hover b {
+    filter: brightness(1.15);
+}
+
+/* 窄窗（数值显示时 4 列网格放不下汇总位）：汇总位换行到网格下方，
+   虚线分隔从竖转横，三指标横排保持单行高度 */
+@media (max-width: 800px) {
+    .quota-daily {
+        flex-direction: row;
+        gap: 14px;
+        width: 100%;
+        margin-left: 0;
+        padding-left: 0;
+        border-left: none;
+        border-top: 1px dashed #30363d;
+        padding-top: 6px;
+        margin-top: 6px;
+    }
+
+    .quota-daily .dv-label {
+        min-width: 0;
+    }
+}
+
+.quota-daily b {
+    color: #c9d1d9;
+    font-weight: 600;
 }
 
 .reset-time {
-    color: #8b949e;
+    color: #a8b3bf;
 }
 
-/* 周额度日均消耗（本次/历史）：每周行的第五列，虚线分隔标记为派生指标，单行不换行 */
-.quota-limit-daily {
-    display: flex;
-    gap: 10px;
-    white-space: nowrap;
-    padding-left: 12px;
-    border-left: 1px dashed #30363d;
-    color: #8b949e;
+/* 倒计时紧迫度三档：默认灰 → 24h 内亮白 → 1h 内琥珀 */
+.reset-near {
+    color: #e6edf3;
+    font-weight: 600;
 }
 
-.quota-limit-daily b {
-    color: #c9d1d9;
+.reset-soon {
+    color: #d29922;
     font-weight: 600;
 }
 
@@ -510,6 +601,59 @@ body {
 
 .settings-item .hint {
     margin: 6px 0 0;
+}
+
+/* ===== 周额度统计弹窗 ===== */
+.weekly-list {
+    margin-top: 8px;
+    max-height: 46vh;
+    overflow-y: auto;
+}
+
+.weekly-row {
+    display: grid;
+    grid-template-columns: 112px minmax(130px, auto) minmax(0, 1fr);
+    column-gap: 10px;
+    align-items: center;
+    padding: 5px 0;
+    border-bottom: 1px solid #21262d;
+    font-size: 12px;
+}
+
+.weekly-row:last-child {
+    border-bottom: none;
+}
+
+.weekly-range {
+    color: #c9d1d9;
+}
+
+.weekly-credits {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.weekly-credits b {
+    color: #c9d1d9;
+    font-weight: 600;
+}
+
+.weekly-pct {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.weekly-pct b {
+    width: 40px; /* 同限额行：百分号成列，进度条起点对齐 */
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.weekly-active .weekly-range {
+    color: #3fb950;
 }
 
 /* ===== 帮助弹窗 ===== */

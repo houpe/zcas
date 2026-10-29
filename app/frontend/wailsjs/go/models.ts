@@ -344,9 +344,34 @@ export namespace quota {
 	        this.periodEnd = source["periodEnd"];
 	    }
 	}
+	export class MonthlyStat {
+	    month: string;
+	    credits: number;
+	    dailyAvg: number;
+	    days: number;
+	    limitCredits: number;
+	    percent: number;
+	    projectedPercent: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MonthlyStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.month = source["month"];
+	        this.credits = source["credits"];
+	        this.dailyAvg = source["dailyAvg"];
+	        this.days = source["days"];
+	        this.limitCredits = source["limitCredits"];
+	        this.percent = source["percent"];
+	        this.projectedPercent = source["projectedPercent"];
+	    }
+	}
 	export class WeeklyHistoryStat {
 	    cycles: number;
 	    dailyPercent: number;
+	    weeklyPercent: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new WeeklyHistoryStat(source);
@@ -356,6 +381,7 @@ export namespace quota {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.cycles = source["cycles"];
 	        this.dailyPercent = source["dailyPercent"];
+	        this.weeklyPercent = source["weeklyPercent"];
 	    }
 	}
 	export class WeeklyCurrentStat {
@@ -364,6 +390,7 @@ export namespace quota {
 	    daysElapsed: number;
 	    percent: number;
 	    dailyPercent: number;
+	    projectedPercent: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new WeeklyCurrentStat(source);
@@ -376,11 +403,13 @@ export namespace quota {
 	        this.daysElapsed = source["daysElapsed"];
 	        this.percent = source["percent"];
 	        this.dailyPercent = source["dailyPercent"];
+	        this.projectedPercent = source["projectedPercent"];
 	    }
 	}
 	export class WeeklyStats {
 	    current?: WeeklyCurrentStat;
 	    historical?: WeeklyHistoryStat;
+	    monthly?: MonthlyStat;
 	
 	    static createFrom(source: any = {}) {
 	        return new WeeklyStats(source);
@@ -390,6 +419,7 @@ export namespace quota {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.current = this.convertValues(source["current"], WeeklyCurrentStat);
 	        this.historical = this.convertValues(source["historical"], WeeklyHistoryStat);
+	        this.monthly = this.convertValues(source["monthly"], MonthlyStat);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -526,7 +556,67 @@ export namespace quota {
 	
 	
 	
+	export class WeeklyCycle {
+	    start: number;
+	    end: number;
+	    finalPct: number;
+	    usedCredits: number;
+	    limitCredits: number;
+	    sampleDays: number;
+	    active: boolean;
 	
+	    static createFrom(source: any = {}) {
+	        return new WeeklyCycle(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.start = source["start"];
+	        this.end = source["end"];
+	        this.finalPct = source["finalPct"];
+	        this.usedCredits = source["usedCredits"];
+	        this.limitCredits = source["limitCredits"];
+	        this.sampleDays = source["sampleDays"];
+	        this.active = source["active"];
+	    }
+	}
+	
+	export class WeeklyReport {
+	    cycles: WeeklyCycle[];
+	    streakDays: number;
+	    longestStreakDays: number;
+	    syncedAt?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new WeeklyReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cycles = this.convertValues(source["cycles"], WeeklyCycle);
+	        this.streakDays = source["streakDays"];
+	        this.longestStreakDays = source["longestStreakDays"];
+	        this.syncedAt = source["syncedAt"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 
 }
 

@@ -45,10 +45,10 @@ func main() {
 
 	err := wails.Run(&options.App{
 		Title:     buildinfo.Current.DisplayName,
-		Width:     980,
+		Width:     860,
 		Height:    700,
-		MinWidth:  860,
-		MinHeight: 600,
+		MinWidth:  720,
+		MinHeight: 560,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

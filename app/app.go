@@ -75,13 +75,15 @@ func (a *App) GetState() *StateView {
 	view := &StateView{Running: platform.IsZCodeRunning(), HasLastBackup: store.HasLast()}
 	if cred, cfg, err := store.ReadLive(); err == nil && hasSession(cred) {
 		if fp := fingerprint.Extract(cred, cfg, zcrypto.DefaultSecret()); fp != nil {
-			saved := store.Exists(fp.EmailShortID)
+			// 精确 ID 匹配失败时按 UserID/邮箱回退，避免同一账号既显示"未保存"又出现在列表
+			savedID := quota.MatchSavedAccount(fp)
+			saved := savedID != ""
 			view.Current = &CurrentView{
 				Label: fp.Label, Provider: fp.Provider, ShortID: fp.ShortID,
 				Email: fp.Email, Saved: saved,
 			}
 			if saved {
-				view.Current.SavedID = fp.EmailShortID
+				view.Current.SavedID = savedID
 			}
 		}
 	}
@@ -455,13 +457,14 @@ func (a *App) GetQuota(id string) (*quota.Overview, error) {
 	secret := zcrypto.DefaultSecret()
 	var tokens []string
 	var cred map[string]any
+	var cfg map[string]any
 	if id == "" {
 		var err error
 		tokens, err = quota.CurrentTokens(secret)
 		if err != nil {
 			return nil, err
 		}
-		cred, _, _ = store.ReadLive()
+		cred, cfg, _ = store.ReadLive()
 	} else {
 		_, snap, err := store.Load(id)
 		if err != nil {
@@ -479,10 +482,27 @@ func (a *App) GetQuota(id string) (*quota.Overview, error) {
 	// 周额度日均消耗：采样进本地历史并计算本次/历史两个指标（静默，不影响主流程）
 	key := id
 	if key == "" {
-		key = quota.AccountKey(cred, secret)
+		key = quota.AccountKey(cred, cfg, secret)
 	}
 	quota.TrackWeekly(key, ov)
+	// 官方按天积分同步（best-effort 后台执行，限频 1h，不阻塞额度返回）
+	if key != "" {
+		go quota.SyncDailyCredits(key, cred, secret)
+	}
 	return ov, nil
+}
+
+// GetWeeklyCycles 周额度各周期用量统计（官方按天积分口径 + 本地采样）；id 为空查当前登录账号。
+func (a *App) GetWeeklyCycles(id string) (*quota.WeeklyReport, error) {
+	key := id
+	if key == "" {
+		cred, cfg, _ := store.ReadLive()
+		key = quota.AccountKey(cred, cfg, zcrypto.DefaultSecret())
+	}
+	if key == "" {
+		return nil, fmt.Errorf("无法识别账号（未登录且未指定账号 id）")
+	}
+	return quota.BuildWeeklyReport(key), nil
 }
 
 // ===== ZCode 进程 =====

@@ -35,6 +35,7 @@ const usage = `zcas — ZCode 账号无感切换工具（macOS）
   zcas rollback [--no-restart]
                            回滚到切换前的登录态
   zcas quota [序号|id]     查询额度（不带参数查当前登录账号）
+  zcas weeks [序号|id]     周额度各周期用量统计（本地采样，不带参数查当前登录账号）
   zcas kill | launch       手动关闭 / 启动 ZCode
 `
 
@@ -62,6 +63,8 @@ func main() {
 		err = cmdRollback(args)
 	case "quota":
 		err = cmdQuota(args)
+	case "weeks":
+		err = cmdWeeks(args)
 	case "kill":
 		err = platform.KillZCode(8 * time.Second)
 	case "launch":
@@ -89,7 +92,7 @@ func cmdStatus() {
 		fmt.Println("当前登录: （无法识别账号指纹）")
 	} else {
 		saved := ""
-		if store.Exists(fp.EmailShortID) {
+		if quota.MatchSavedAccount(fp) != "" {
 			saved = "  [已保存]"
 		}
 		running := ""
@@ -314,8 +317,9 @@ func cmdQuota(args []string) error {
 		if err != nil {
 			return err
 		}
-		cred, _, _ = store.ReadLive()
-		accountKey = quota.AccountKey(cred, secret)
+		var cfgMap map[string]any
+		cred, cfgMap, _ = store.ReadLive()
+		accountKey = quota.AccountKey(cred, cfgMap, secret)
 		whom = "当前账号"
 	} else {
 		id, err := store.Resolve(args[0])
@@ -377,14 +381,83 @@ func cmdQuota(args []string) error {
 	}
 	if w := ov.Weekly; w != nil {
 		if w.Current != nil {
-			fmt.Printf("  - 周额度日均(本次): %.2f%%/天（已用 %d%% / 第 %.1f 天，重置 %s）\n",
-				w.Current.DailyPercent, int(w.Current.Percent), w.Current.DaysElapsed,
+			fmt.Printf("  - 周额度(本次): 日均 %.2f%%/天 · 预计本周 %.0f%%（已用 %d%% / 第 %.1f 天，重置 %s）\n",
+				w.Current.DailyPercent, w.Current.ProjectedPercent, int(w.Current.Percent), w.Current.DaysElapsed,
 				time.UnixMilli(w.Current.End).Format("01-02 15:04"))
 		}
 		if w.Historical != nil {
-			fmt.Printf("  - 周额度日均(历史): %.2f%%/天（近 %d 个完整周期）\n",
-				w.Historical.DailyPercent, w.Historical.Cycles)
+			fmt.Printf("  - 周额度(历史): 均每周 %.0f%% · 日均 %.2f%%/天（近 %d 个完整周期）\n",
+				w.Historical.WeeklyPercent, w.Historical.DailyPercent, w.Historical.Cycles)
 		}
+		if w.Monthly != nil {
+			fmt.Printf("  - 本月(%s): %.0f%% · 累计 %s 积分 · 日均 %s/天 · 预计全月 %.0f%%（额度按周滚动，不随月重置）\n",
+				w.Monthly.Month, w.Monthly.Percent, commaInt(int64(w.Monthly.Credits)),
+				commaInt(int64(w.Monthly.DailyAvg)), w.Monthly.ProjectedPercent)
+		}
+	}
+	return nil
+}
+
+// ===== weeks（周额度周期统计）=====
+
+func cmdWeeks(args []string) error {
+	secret := zcrypto.DefaultSecret()
+	var accountKey, whom string
+	if len(args) == 0 {
+		cred, cfg, err := store.ReadLive()
+		if err != nil {
+			return err
+		}
+		accountKey = quota.AccountKey(cred, cfg, secret)
+		whom = "当前账号"
+	} else {
+		id, err := store.Resolve(args[0])
+		if err != nil {
+			return err
+		}
+		meta, _, err := store.Load(id)
+		if err != nil {
+			return err
+		}
+		accountKey = meta.ID
+		whom = meta.Label
+	}
+	fmt.Printf("账号: %s\n", whom)
+	rep := quota.BuildWeeklyReport(accountKey)
+	if len(rep.Cycles) == 0 {
+		fmt.Println("（还没有周额度采样记录；查询额度（zcas quota）时自动采样，一个周期（7天）后出现第一条统计）")
+		return nil
+	}
+	if rep.StreakDays > 0 {
+		fmt.Printf("连续使用 %d 天（最长 %d 天）\n", rep.StreakDays, rep.LongestStreakDays)
+	}
+	var done []float64
+	for _, c := range rep.Cycles {
+		if !c.Active {
+			done = append(done, c.FinalPct)
+		}
+	}
+	if len(done) > 0 {
+		sum := 0.0
+		for _, v := range done {
+			sum += v
+		}
+		fmt.Printf("完整周期 %d 个 · 均每周 %.0f%%\n", len(done), sum/float64(len(done)))
+	} else {
+		fmt.Println("（暂无完整周期记录，当前周期结束后出现统计）")
+	}
+	for _, c := range rep.Cycles {
+		state := "完成"
+		if c.Active {
+			state = "进行中"
+		}
+		credits := "  --"
+		if c.UsedCredits > 0 {
+			credits = commaInt(int64(c.UsedCredits))
+		}
+		fmt.Printf("  %s ~ %s  用了 %7s 积分（%5.1f%%）  [%s]\n",
+			time.UnixMilli(c.Start).Format("01-02"), time.UnixMilli(c.End).Format("01-02"),
+			credits, c.FinalPct, state)
 	}
 	return nil
 }

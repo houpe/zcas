@@ -1,8 +1,8 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react'
 import {
     CancelOAuth, Capture, CheckHealthNow, CheckUpdate, DeleteAccount, FinishOAuth,
-    FinishReOAuth, GetAppInfo, GetHealth, GetQuota, GetState, RenameAccount, Rollback,
-    StartOAuth, StartReOAuth, Use,
+    FinishReOAuth, GetAppInfo, GetHealth, GetQuota, GetState, GetWeeklyCycles, RenameAccount,
+    Rollback, StartOAuth, StartReOAuth, Use,
 } from '../wailsjs/go/main/App'
 import {BrowserOpenURL, EventsOn} from '../wailsjs/runtime/runtime'
 
@@ -35,6 +35,17 @@ function fmtReset(ts, mode) {
     if (d > 0) return `${d}天${h}小时${m}分后重置`
     if (h > 0) return `${h}小时${m}分后重置`
     return `${m}分钟后重置`
+}
+
+// resetUrgency 倒计时紧迫度：<1h soon（琥珀）、<24h near（亮白）、其余默认灰
+function resetUrgency(ts) {
+    if (!ts) return ''
+    if (ts < 1e12) ts *= 1000
+    const diff = ts - Date.now()
+    if (diff <= 0) return ''
+    if (diff < 60 * 60 * 1000) return 'soon'
+    if (diff < 24 * 60 * 60 * 1000) return 'near'
+    return ''
 }
 
 // pctClass 用量百分比分级着色：<60 绿、<85 黄、否则红
@@ -81,6 +92,21 @@ const ICONS = {
         <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
         <line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>
     </>),
+    // 设置（齿轮）
+    settings: (<>
+        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+        <circle cx="12" cy="12" r="3"/>
+    </>),
+    // 添加账号（用户+加号）
+    userPlus: (<>
+        <path d="M2 21a8 8 0 0 1 13.292-6"/><circle cx="10" cy="8" r="5"/>
+        <path d="M19 16v6"/><path d="M22 19h-6"/>
+    </>),
+    // 元信息说明（圆圈感叹号，悬停显示渠道/ID/时间）
+    alert: (<>
+        <circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/>
+        <line x1="12" x2="12.01" y1="16" y2="16"/>
+    </>),
 }
 
 // ===== 术语提示文案（tooltip / 帮助弹窗共用，改文案只动这里）=====
@@ -94,7 +120,8 @@ const TIPS = {
     fiveHourCard: '5小时重置卡：立即重置「每5小时」窗口的已用量',
     weekCard: '周重置卡：立即重置「每周」额度的已用量',
     weeklyCurrent: w => `本次周额度日均消耗 = 已用 ${w.percent}% ÷ 已过 ${w.daysElapsed.toFixed(1)} 天。周期开始时间由重置时间反推（重置 − 7 天），重置于 ${fmtDate(w.end)}`,
-    weeklyHistory: h => `历史周额度日均消耗 = 近 ${h.cycles} 个完整周期「期末已用% ÷ 7」的平均值。数据采样存于本地 ~/.zcas/quota-history.json，最多保留 13 个周期`,
+    weeklyProjection: w => `按当前节奏预计本周期总消耗 = 本次日均 × 7 天（${w.dailyPercent.toFixed(1)}%/天 × 7 ≈ ${w.projectedPercent.toFixed(0)}%）。超过 100% 表示照这个节奏额度会提前用完`,
+    weeklyHistory: h => `平均每周消耗 = 近 ${h.cycles} 个完整周期「期末已用%」的均值（日均口径 = ${h.dailyPercent.toFixed(1)}%/天）。数据采样存于本地 ~/.zcas/quota-history.json，最多保留 13 个周期`,
     sessionExpired: '该账号的登录会话（oauth token）已在服务端过期，切换后 ZCode 会提示「套餐查询失败」。写代码不受影响（用的是长效凭证），需要点击「重新授权」刷新登录态',
 }
 
@@ -138,20 +165,34 @@ function fmtShortDate(ms) {
     return d.getFullYear() === now.getFullYear() ? md : `${d.getFullYear()}年${md}`
 }
 
+// fmtMD 月-日数字形式（10-28），周额度统计的周期范围用
+function fmtMD(ms) {
+    if (!ms) return ''
+    if (ms < 1e12) ms *= 1000
+    const d = new Date(ms)
+    const p = n => String(n).padStart(2, '0')
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
 // QuotaView 展示一个账号的额度状态（自动加载 + 手动刷新）。
 // showStartPlan：是否渲染 Start Plan 套餐额度块（总额/已用/剩余/各模型明细）。
 // resetMode：重置时间显示模式（remaining=剩余时长 / date=具体日期）。
-function QuotaView({qs, showStartPlan = true, resetMode = 'remaining'}) {
+// showLimitNumbers：是否渲染限额行的已用/总量绝对数值（隐藏后保留百分比，悬停可查）。
+// onOpenWeekly：点击周额度消耗汇总位时打开周期统计弹窗。
+function QuotaView({qs, showStartPlan = true, resetMode = 'remaining', showLimitNumbers = true, onOpenWeekly}) {
     if (!qs) return null
     if (qs.loading && !qs.data) return <div className="quota-panel">查询中…</div>
     if (qs.error) return <div className="quota-panel quota-error">{qs.error}</div>
     const quota = qs.data
     if (!quota) return null
     // 无套餐账号（plans/balances 均空）三个汇总字段都是 null，逐个条件渲染，避免整行"未知"
-    const hasSummary = showStartPlan && !!(quota.planTier || quota.total != null || quota.used != null || quota.remaining != null)
+    const hasNumbers = !!(quota.total != null || quota.used != null ||
+        quota.remaining != null || quota.percentUsed != null)
+    const hasSummary = showStartPlan && hasNumbers
     const hasItems = showStartPlan && !!(quota.items && quota.items.length > 0)
-    const hasStartPlanData = !!(quota.planTier || quota.total != null || quota.used != null ||
-        quota.remaining != null || (quota.items && quota.items.length > 0))
+    const hasStartPlanData = !!(quota.planTier || hasNumbers || (quota.items && quota.items.length > 0))
+    // 套餐徽标：汇总行没渲染（无数值或用户隐藏）时并入 Coding Plan 标签行，避免孤儿行
+    const tierBadge = showStartPlan && quota.planTier ? quota.planTier.label : null
     const rc = quota.resetCards
     const hasCards = !!(rc && (rc.fiveHour.count > 0 || rc.week.count > 0))
     const earliestExpiry = rc
@@ -204,8 +245,9 @@ function QuotaView({qs, showStartPlan = true, resetMode = 'remaining'}) {
             ))}
             {quota.codingPlan ? (
                 <>
-                    {/* 上方无内容时不出分割线，避免唯一区块顶部多一条线 */}
+                    {/* 上方无内容时不出分割线；套餐徽标在汇总行没渲染时并入本行（如只有订阅信息无数值的账号） */}
                     <div className={`quota-row${hasSummary || hasItems ? ' quota-coding-plan' : ''}`}>
+                        {tierBadge && !hasSummary && <span className="tier">{tierBadge}</span>}
                         <span className="tier">
                             {quota.codingPlan.productName ||
                                 `Coding Plan${quota.codingPlan.level ? ' ' + quota.codingPlan.level : ''}`}
@@ -213,39 +255,85 @@ function QuotaView({qs, showStartPlan = true, resetMode = 'remaining'}) {
                         {quota.codingPlan.validPeriod &&
                             <span className="valid-period" title={TIPS.validPeriod}>有效期至 {quota.codingPlan.validPeriod}</span>}
                     </div>
-                    {/* 所有限额行放在同一个 grid 容器里，列宽跨行共享，5小时/周两列严格对齐；
-                        周额度日均消耗（本次/历史）作为第五列紧跟每周行末尾，其余行留空占位 */}
-                    <div className="quota-limits">
-                        {quota.codingPlan.limits.map((l, i) => {
-                            const daily = l.name === '每周' ? quota.weekly : null
-                            return (
+                    {/* 限额两行为一组（网格列跨行对齐）；周额度日均作为右侧汇总位：
+                        竖排、垂直居中于整组、虚线分隔——它是额度区的结论性信息 */}
+                    <div className="quota-limits-wrap">
+                        <div className={`quota-limits${showLimitNumbers ? '' : ' quota-limits-no-num'}`}>
+                            {quota.codingPlan.limits.map((l, i) => (
                                 <React.Fragment key={`cp-${i}`}>
                                     <span className="quota-item-name">{l.name}</span>
-                                    <span className="quota-limit-usage"><b>{fmtNum(l.used)}</b>
-                                        <span className="num-dim"> / {fmtNum(l.limit)}</span></span>
-                                    <span className="quota-limit-pct" title={TIPS.usagePct}>
+                                    {showLimitNumbers &&
+                                        <span className="quota-limit-usage"><b>{fmtNum(l.used)}</b>
+                                            <span className="num-dim"> / {fmtNum(l.limit)}</span></span>}
+                                    <span className="quota-limit-pct"
+                                          title={showLimitNumbers ? TIPS.usagePct
+                                              : `已用 ${fmtNum(l.used)} / ${fmtNum(l.limit)} · ${TIPS.usagePct}`}>
                                         <b className={pctClass(l.percent)}>{l.percent}%</b>
                                         <PctBar percent={l.percent} width={44}/>
                                     </span>
-                                    <span className="reset-time"
+                                    <span className={`reset-time reset-${resetUrgency(l.nextReset) || 'idle'}`}
                                           title={l.nextReset > 0 ? `重置 ${fmtDate(l.nextReset)}` : ''}>
                                         {l.nextReset > 0 ? fmtReset(l.nextReset, resetMode) : ''}
                                     </span>
-                                    {daily && (daily.current || daily.historical) ? (
-                                        <span className="quota-limit-daily">
-                                            {daily.current &&
-                                                <span title={TIPS.weeklyCurrent(daily.current)}>
-                                                    本次 <b>{daily.current.dailyPercent.toFixed(1)}</b><span className="num-dim">%/天</span>
-                                                </span>}
-                                            {daily.historical &&
-                                                <span title={TIPS.weeklyHistory(daily.historical)}>
-                                                    历史 <b>{daily.historical.dailyPercent.toFixed(1)}</b><span className="num-dim">%/天</span>
-                                                </span>}
-                                        </span>
-                                    ) : <span/>}
                                 </React.Fragment>
-                            )
-                        })}
+                            ))}
+                            {/* 本月累计：上限为按周额度折算（周限额 × 当月天数 ÷ 7），与限额行同构；
+                                数值隐藏时不渲染占位格（本月行恒有末列，3/4 列模板都恰好占满） */}
+                            {quota.weekly?.monthly && (
+                                <>
+                                    <span className="quota-item-name">本月</span>
+                                    {showLimitNumbers &&
+                                        <span className="quota-limit-usage">
+                                            <b>{fmtNum(Math.round(quota.weekly.monthly.credits))}</b>
+                                            {quota.weekly.monthly.limitCredits > 0 &&
+                                                <span className="num-dim"> / {fmtNum(Math.round(quota.weekly.monthly.limitCredits))}</span>}
+                                        </span>}
+                                    <span className="quota-limit-pct"
+                                          title={`本月已用 = 累计积分 ÷ 折算月上限；折算月上限 = 周限额 × 当月天数 ÷ 7（套餐无独立月度上限）· 日均 ${fmtNum(Math.round(quota.weekly.monthly.dailyAvg))} 积分/天 · 覆盖 ${quota.weekly.monthly.days} 天`}>
+                                        {quota.weekly.monthly.limitCredits > 0 && <>
+                                            <b className={pctClass(quota.weekly.monthly.percent)}>
+                                                {quota.weekly.monthly.percent.toFixed(0)}%
+                                            </b>
+                                            <PctBar percent={quota.weekly.monthly.percent} width={44}/>
+                                        </>}
+                                    </span>
+                                    <span className="reset-time"
+                                          title={`额度按 7 天周期滚动，不随自然月重置；此为按当前节奏预计全月消耗（日均 × 当月天数 ÷ 折算上限）`}>
+                                        {quota.weekly.monthly.limitCredits > 0 && quota.weekly.monthly.projectedPercent > 0
+                                            ? `预计全月 ${quota.weekly.monthly.projectedPercent.toFixed(0)}%`
+                                            : `自然月 ${quota.weekly.monthly.month}`}
+                                    </span>
+                                </>
+                            )}
+                        </div>
+                        {quota.weekly && (quota.weekly.current || quota.weekly.historical) && (
+                            <div className="quota-daily" role="button" tabIndex={0}
+                                 title="周额度消耗节奏（点击查看各周期统计）"
+                                 onClick={onOpenWeekly}
+                                 onKeyDown={e => {
+                                     if (e.key === 'Enter' || e.key === ' ') onOpenWeekly?.()
+                                 }}>
+                                {quota.weekly.current &&
+                                    <span title={TIPS.weeklyCurrent(quota.weekly.current)}>
+                                        <span className="dv-label">本次</span>
+                                        <b className="dv-cur">{quota.weekly.current.dailyPercent.toFixed(1)}</b><span
+                                        className="num-dim">%/天</span>
+                                    </span>}
+                                {quota.weekly.current &&
+                                    <span title={TIPS.weeklyProjection(quota.weekly.current)}>
+                                        <span className="dv-label">预计本周</span>
+                                        <b className={pctClass(quota.weekly.current.projectedPercent)}>
+                                            {quota.weekly.current.projectedPercent.toFixed(0)}</b><span
+                                        className="num-dim">%</span>
+                                    </span>}
+                                {quota.weekly.historical &&
+                                    <span title={TIPS.weeklyHistory(quota.weekly.historical)}>
+                                        <span className="dv-label">均每周</span>
+                                        <b className="dv-avg">{quota.weekly.historical.weeklyPercent.toFixed(0)}</b><span
+                                        className="num-dim">%</span>
+                                    </span>}
+                            </div>
+                        )}
                     </div>
                     {resetCardsRow}
                 </>
@@ -333,7 +421,8 @@ function HelpModal({onClose}) {
         ['⚡ 5小时重置卡', TIPS.fiveHourCard],
         ['📅 周重置卡', TIPS.weekCard],
         ['日均消耗·本次', '本周期的周额度平均每天消耗：已用% ÷ 已过天数。周期开始时间由重置时间反推（重置时间 − 7 天），所以刚重置完的头几个小时数值会偏大'],
-        ['日均消耗·历史', '过去各完整周期「期末已用% ÷ 7 天」的平均值，反映平时的周额度消耗节奏；整周未使用的周期不计入。数据采样存在本地，删账号时一并清除'],
+        ['预计本周', '按当前节奏预计本周期总消耗 = 本次日均 × 7 天。超过 100% 表示照这个节奏周额度会提前用完，需要降低消耗或用周重置卡'],
+        ['均每周', '过去各完整周期「期末已用%」的平均值，即平时每周的周额度消耗水平；整周未使用的周期不计入。数据采样存在本地，删账号时一并清除'],
         ['会话过期', '该账号的 BigModel/z.ai 登录会话已在服务端过期，ZCode 里会提示「套餐查询失败」。写代码不受影响（用长效凭证）；点击账号上的「重新授权」重新走一次浏览器授权即可恢复，之后后台会定期保活以减少再次过期的概率'],
     ]
     return (
@@ -356,8 +445,10 @@ function HelpModal({onClose}) {
     )
 }
 
-// SettingsModal 显示设置：Start Plan 额度块显隐、重置时间显示模式（选择即时生效并持久化）
-function SettingsModal({showStartPlan, onToggleStartPlan, resetMode, onResetMode, onClose}) {
+// SettingsModal 显示设置：Start Plan 额度块显隐、重置时间显示模式、限额数值显隐
+// （选择即时生效并持久化）
+function SettingsModal({showStartPlan, onToggleStartPlan, resetMode, onResetMode,
+                           showLimitNumbers, onToggleLimitNumbers, onClose}) {
     return (
         <div className="modal-mask" onClick={onClose}>
             <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
@@ -382,8 +473,79 @@ function SettingsModal({showStartPlan, onToggleStartPlan, resetMode, onResetMode
                     </div>
                     <p className="hint">剩余时长如「3小时25分后重置」「4天23小时15分后重置」，每半分钟自动走字；悬停始终显示具体时间点</p>
                 </div>
+                <div className="settings-item">
+                    <div className="settings-label">限额用量数值</div>
+                    <div className="provider-choices">
+                        <button className={showLimitNumbers ? 'choice active' : 'choice'}
+                                onClick={() => onToggleLimitNumbers(true)}>显示</button>
+                        <button className={!showLimitNumbers ? 'choice active' : 'choice'}
+                                onClick={() => onToggleLimitNumbers(false)}>隐藏</button>
+                    </div>
+                    <p className="hint">「每5小时 / 每周」限额行的已用与总量绝对数值；隐藏后百分比与进度条左移补位，悬停百分比可查看具体数值</p>
+                </div>
                 <div className="confirm-actions">
                     <button className="btn btn-primary" onClick={onClose}>完成</button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+// WeeklyModal 周额度统计：各周期用量明细。官方按天积分口径（credit-usage/activity，
+// 每次查额度自动同步），周期用量 = 周期内各天积分之和；无官方数据时回退本地采样。
+function WeeklyModal({id, label, onClose}) {
+    const [st, setSt] = useState({loading: true})
+    useEffect(() => {
+        GetWeeklyCycles(id)
+            .then(r => setSt({loading: false, report: r}))
+            .catch(e => setSt({loading: false, error: String(e)}))
+    }, [id])
+    const list = st.report?.cycles || []
+    const done = list.filter(c => !c.active)
+    const avg = done.length ? done.reduce((s, c) => s + c.finalPct, 0) / done.length : null
+    return (
+        <div className="modal-mask" onClick={onClose}>
+            <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+                <h3 className="help-title">周额度统计 · {label}</h3>
+                {st.loading && <p className="hint">加载中…</p>}
+                {st.error && <p className="hint warn">{st.error}</p>}
+                {list.length > 0 ? (
+                    <>
+                        <p className="hint">
+                            {st.report?.streakDays > 0 &&
+                                <>连续使用 <b>{st.report.streakDays}</b> 天（最长 {st.report.longestStreakDays} 天）· </>}
+                            {avg != null
+                                ? <>完整周期 {done.length} 个 · 均每周 <b>{avg.toFixed(0)}%</b></>
+                                : <>当前周期尚未结束——结束后这里出现第一条统计</>}
+                        </p>
+                        <div className="weekly-list">
+                            {list.map((c, i) => (
+                                <div className={`weekly-row${c.active ? ' weekly-active' : ''}`} key={i}>
+                                    <span className="weekly-range">
+                                        {c.active ? '进行中' : `${fmtMD(c.start)} ~ ${fmtMD(c.end)}`}
+                                    </span>
+                                    <span className="weekly-credits"
+                                          title="周期内各天积分之和（官方按天数据；周期起止落在日内时，边界日按时间占比加权）">
+                                        {c.usedCredits > 0
+                                            ? <><b>{fmtNum(Math.round(c.usedCredits))}</b>
+                                                <span className="num-dim">{c.limitCredits > 0 ? ` / ${fmtNum(Math.round(c.limitCredits))}` : ''}</span></>
+                                            : <span className="num-dim">无官方数据</span>}
+                                    </span>
+                                    <span className="weekly-pct">
+                                        <b className={pctClass(c.finalPct)}>{c.finalPct.toFixed(0)}%</b>
+                                        <PctBar percent={c.finalPct} width={90}/>
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                        <p className="hint">数据源：官方按天积分接口（查询额度时自动同步，每小时限频一次）</p>
+                    </>
+                ) : !st.loading && !st.error && (
+                    <p className="hint">还没有周额度记录。刷新一次额度即可：工具会同步官方按天积分并开始采样，
+                        当前周期结束后出现第一条统计。</p>
+                )}
+                <div className="confirm-actions">
+                    <button className="btn btn-primary" onClick={onClose}>关闭</button>
                 </div>
             </div>
         </div>
@@ -411,12 +573,20 @@ function reauthDoneMsg(label, liveRefreshed, restarted) {
 // health: 会话健康报告（undefined=未检测）；reauthActive: 该行正处于重新授权等待回调状态
 function AccountRow({meta, isCurrent, quotaState, onRefreshQuota, onAction, notify, askConfirm,
                          health, reauthActive, onStartReauth, onFinishReauth, onCancelReauth,
-                         showStartPlan, resetMode}) {
+                         showStartPlan, resetMode, showLimitNumbers, onOpenWeekly}) {
     const [busy, setBusy] = useState('')
     const [renaming, setRenaming] = useState(false)
     const [newName, setNewName] = useState(meta.label)
     const [callback, setCallback] = useState('')
     const expired = health?.status === 'expired'
+    // 元信息（渠道/ID/时间/备注）合并到名字后的「!」图标 tooltip，行内不再常驻展示
+    const metaTip = [
+        `渠道：${providerLabel(meta.provider)}`,
+        `ID：${meta.id}`,
+        `抓取：${fmtDate(meta.capturedAt)}`,
+        meta.updatedAt > 0 ? `保鲜：${fmtRelative(meta.updatedAt)}（${fmtDate(meta.updatedAt)}）` : '',
+        meta.note ? `备注：${meta.note}` : '',
+    ].filter(Boolean).join('\n')
 
     const run = async (name, fn) => {
         setBusy(name)
@@ -457,16 +627,13 @@ function AccountRow({meta, isCurrent, quotaState, onRefreshQuota, onAction, noti
                     )}
                     {isCurrent && <span className="badge-live">当前登录</span>}
                     {expired && <span className="badge-expired" title={TIPS.sessionExpired}>会话过期</span>}
+                    <span className="meta-info" tabIndex={0} title={metaTip}>
+                        <Icon d={ICONS.alert} size={13}/>
+                    </span>
                 </div>
-                <div className="row-meta">
-                    <span className="meta-provider" title={TIPS.provider(meta.provider)}>{providerLabel(meta.provider)}</span>
-                    <span className="meta-id" title={TIPS.id}>ID {meta.id}</span>
-                    <span title={TIPS.captured(fmtDate(meta.capturedAt))}>🕐 {fmtShortDate(meta.capturedAt)}</span>
-                    {meta.updatedAt > 0 &&
-                        <span title={TIPS.fresh(fmtDate(meta.updatedAt))}>🔄 {fmtRelative(meta.updatedAt)}</span>}
-                    {meta.note && <span className="meta-note" title={meta.note}>💬 {meta.note}</span>}
-                </div>
-                <QuotaView qs={quotaState} showStartPlan={showStartPlan} resetMode={resetMode}/>
+                <QuotaView qs={quotaState} showStartPlan={showStartPlan} resetMode={resetMode}
+                           showLimitNumbers={showLimitNumbers}
+                           onOpenWeekly={() => onOpenWeekly(meta.id, meta.label)}/>
                 {reauthActive && (
                     <div className="reauth-panel">
                         <p className="hint">已打开浏览器等待授权，完成后会自动跳回并更新登录态。
@@ -535,7 +702,8 @@ function AccountRow({meta, isCurrent, quotaState, onRefreshQuota, onAction, noti
 }
 
 // CurrentGuestRow 当前登录但未保存的账号（置顶显示，可一键保存入库）
-function CurrentGuestRow({current, quotaState, onRefreshQuota, onSave, showStartPlan, resetMode}) {
+function CurrentGuestRow({current, quotaState, onRefreshQuota, onSave, showStartPlan, resetMode, showLimitNumbers, onOpenWeekly}) {
+    const metaTip = `渠道：${providerLabel(current.provider)}\nID：${current.shortId}`
     return (
         <div className="row row-current row-guest">
             <div className="row-main">
@@ -543,12 +711,13 @@ function CurrentGuestRow({current, quotaState, onRefreshQuota, onSave, showStart
                     <span className="row-label">{current.label}</span>
                     <span className="badge-live">当前登录</span>
                     <span className="badge-unsaved">未保存</span>
+                    <span className="meta-info" tabIndex={0} title={metaTip}>
+                        <Icon d={ICONS.alert} size={13}/>
+                    </span>
                 </div>
-                <div className="row-meta">
-                    <span className="meta-provider" title={TIPS.provider(current.provider)}>{providerLabel(current.provider)}</span>
-                    <span className="meta-id" title={TIPS.id}>ID {current.shortId}</span>
-                </div>
-                <QuotaView qs={quotaState} showStartPlan={showStartPlan} resetMode={resetMode}/>
+                <QuotaView qs={quotaState} showStartPlan={showStartPlan} resetMode={resetMode}
+                           showLimitNumbers={showLimitNumbers}
+                           onOpenWeekly={() => onOpenWeekly('', current.label)}/>
             </div>
             <div className="row-actions">
                 <button className="btn btn-primary" onClick={onSave}>保存入库</button>
@@ -715,9 +884,10 @@ export default function App() {
     const [showSettings, setShowSettings] = useState(false)
     const [showVersion, setShowVersion] = useState(false)
     const [showUpdate, setShowUpdate] = useState(false)
-    // 显示设置（localStorage 持久化）：Start Plan 额度块显隐 + 重置时间显示模式
+    // 显示设置（localStorage 持久化）：Start Plan 额度块显隐 + 重置时间显示模式 + 限额数值显隐
     const [showStartPlan, setShowStartPlan] = useState(() => localStorage.getItem('zcas.showStartPlan') !== '0')
     const [resetMode, setResetMode] = useState(() => localStorage.getItem('zcas.resetTimeMode') || 'remaining')
+    const [showLimitNumbers, setShowLimitNumbers] = useState(() => localStorage.getItem('zcas.showLimitNumbers') !== '0')
     // 剩余时长模式下周期性触发重渲染，让「X小时Y分后重置」走字（静态数据本身不更新）
     const [, setTick] = useState(0)
     useEffect(() => {
@@ -726,6 +896,9 @@ export default function App() {
     useEffect(() => {
         localStorage.setItem('zcas.resetTimeMode', resetMode)
     }, [resetMode])
+    useEffect(() => {
+        localStorage.setItem('zcas.showLimitNumbers', showLimitNumbers ? '1' : '0')
+    }, [showLimitNumbers])
     useEffect(() => {
         if (resetMode !== 'remaining') return
         const t = setInterval(() => setTick(v => v + 1), 30000)
@@ -737,6 +910,7 @@ export default function App() {
     const [confirm, setConfirm] = useState(null) // {text, action}
     const [health, setHealth] = useState({}) // 账号 id → {status, checkedAt}
     const [reauthID, setReauthID] = useState(null) // 正在重新授权的账号 id
+    const [weeklyView, setWeeklyView] = useState(null) // 周额度统计弹窗 {id, label}
     // oauth:error 事件监听注册一次，用 ref 读最新的 reauthID（避免闭包旧值）
     const reauthRef = useRef(null)
     reauthRef.current = reauthID
@@ -792,6 +966,9 @@ export default function App() {
         setReauthID(null)
     }, [])
 
+    // 打开周额度周期统计弹窗（id 为空 = 当前登录账号）
+    const openWeekly = useCallback((id, label) => setWeeklyView({id, label}), [])
+
     useEffect(() => {
         refresh()
         GetAppInfo().then(setInfo).catch(() => {})
@@ -843,9 +1020,16 @@ export default function App() {
                             notify(String(e), 'error')
                         }
                     })}>回滚</button>}
-                <button className="btn" onClick={refresh}>刷新</button>
-                <button className="btn" title="显示设置" onClick={() => setShowSettings(true)}>设置</button>
-                <button className="btn btn-primary" onClick={() => setShowAdd(true)}>添加账号</button>
+                <button className="btn btn-icon" title="刷新账号列表与额度" aria-label="刷新" onClick={refresh}>
+                    <Icon d={ICONS.refresh}/>
+                </button>
+                <button className="btn btn-icon" title="显示设置" aria-label="显示设置" onClick={() => setShowSettings(true)}>
+                    <Icon d={ICONS.settings}/>
+                </button>
+                <button className="btn btn-icon btn-primary" title="添加账号" aria-label="添加账号"
+                        onClick={() => setShowAdd(true)}>
+                    <Icon d={ICONS.userPlus}/>
+                </button>
                 <button className="btn btn-help" title="字段说明" onClick={() => setShowHelp(true)}>ⓘ</button>
             </header>
 
@@ -856,7 +1040,9 @@ export default function App() {
                                      onRefreshQuota={loadQuota}
                                      onSave={() => setShowAdd(true)}
                                      showStartPlan={showStartPlan}
-                                     resetMode={resetMode}/>}
+                                     resetMode={resetMode}
+                                     showLimitNumbers={showLimitNumbers}
+                                     onOpenWeekly={openWeekly}/>}
                 {state?.accounts?.map(m => (
                     <AccountRow key={m.id} meta={m}
                                 isCurrent={currentId === m.id}
@@ -869,7 +1055,9 @@ export default function App() {
                                 onFinishReauth={finishReauth}
                                 onCancelReauth={cancelReauth}
                                 showStartPlan={showStartPlan}
-                                resetMode={resetMode}/>
+                                resetMode={resetMode}
+                                showLimitNumbers={showLimitNumbers}
+                                onOpenWeekly={openWeekly}/>
                 ))}
                 {!showGuestRow && state?.accounts?.length === 0 &&
                     <p className="empty">还没有保存的账号。点击右上角「添加账号」，或在 ZCode 登录后使用「抓取当前登录」。</p>}
@@ -880,7 +1068,11 @@ export default function App() {
                                             onToggleStartPlan={setShowStartPlan}
                                             resetMode={resetMode}
                                             onResetMode={setResetMode}
+                                            showLimitNumbers={showLimitNumbers}
+                                            onToggleLimitNumbers={setShowLimitNumbers}
                                             onClose={() => setShowSettings(false)}/>}
+            {weeklyView && <WeeklyModal id={weeklyView.id} label={weeklyView.label}
+                                        onClose={() => setWeeklyView(null)}/>}
             {showVersion && info && <VersionModal info={info} onClose={() => setShowVersion(false)}/>}
             {showUpdate && <UpdateModal onClose={() => setShowUpdate(false)}/>}
             {showAdd && <AddAccountModal onClose={() => setShowAdd(false)}

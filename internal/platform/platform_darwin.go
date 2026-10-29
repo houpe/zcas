@@ -6,8 +6,12 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -19,21 +23,59 @@ const (
 
 var ErrZCodeNotRunning = errors.New("ZCode 未在运行")
 
-// IsZCodeRunning 检测 ZCode 主进程是否在运行（-x 精确匹配，不会误匹配 Helper 进程）。
+// zcodePIDs 返回 ZCode 主进程的 PID 列表。
+//
+// 不用 pgrep/pkill：实测 ZCode 3.16+ 的主进程对 libproc 枚举不可见
+// （pgrep -x ZCode 匹配不到，而 ps 走 kinfo 能看到 comm=ZCode），
+// 改为解析 `ps -axo pid=,comm=`，按可执行文件名（路径最后一段）精确匹配；
+// Helper 进程（"ZCode Helper"、"ZCode Helper (Renderer)" 等）名字不同，天然排除，
+// zcode-cli / zcode-host 等辅助二进制大小写不同也不会误匹配。
+func zcodePIDs() []int {
+	out, err := exec.Command("ps", "-axo", "pid=,comm=").Output()
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid == os.Getpid() {
+			continue
+		}
+		// comm 含空格的进程名（如 Helper (Renderer)），把余下字段拼回完整名
+		name := strings.Join(fields[1:], " ")
+		if filepath.Base(name) == ProcessName {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+// IsZCodeRunning 检测 ZCode 主进程是否在运行。
 func IsZCodeRunning() bool {
-	return exec.Command("pgrep", "-x", ProcessName).Run() == nil
+	return len(zcodePIDs()) > 0
 }
 
 // KillZCode 先 SIGTERM 优雅退出，超时后 SIGKILL 升级，再等确认。
 func KillZCode(wait time.Duration) error {
-	if !IsZCodeRunning() {
+	pids := zcodePIDs()
+	if len(pids) == 0 {
 		return nil
 	}
-	_ = exec.Command("pkill", "-x", ProcessName).Run()
+	for _, pid := range pids {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+	}
 	if waitGone(wait) {
 		return nil
 	}
-	_ = exec.Command("pkill", "-9", "-x", ProcessName).Run()
+	if pids = zcodePIDs(); len(pids) > 0 {
+		for _, pid := range pids {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
 	if waitGone(3 * time.Second) {
 		return nil
 	}

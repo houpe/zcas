@@ -27,6 +27,8 @@ export function GetQuota(arg1:string):Promise<quota.Overview>;
 
 export function GetState():Promise<main.StateView>;
 
+export function GetWeeklyCycles(arg1:string):Promise<quota.WeeklyReport>;
+
 export function KillZCode():Promise<void>;
 
 export function LaunchZCode():Promise<void>;

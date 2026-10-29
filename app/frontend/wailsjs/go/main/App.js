@@ -46,6 +46,10 @@ export function GetState() {
   return window['go']['main']['App']['GetState']();
 }
 
+export function GetWeeklyCycles(arg1) {
+  return window['go']['main']['App']['GetWeeklyCycles'](arg1);
+}
+
 export function KillZCode() {
   return window['go']['main']['App']['KillZCode']();
 }
