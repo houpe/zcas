@@ -120,7 +120,7 @@ const TIPS = {
     fiveHourCard: '5小时重置卡：立即重置「每5小时」窗口的已用量',
     weekCard: '周重置卡：立即重置「每周」额度的已用量',
     weeklyCurrent: w => `本次周额度日均消耗 = 已用 ${w.percent}% ÷ 已过 ${w.daysElapsed.toFixed(1)} 天。周期开始时间由重置时间反推（重置 − 7 天），重置于 ${fmtDate(w.end)}`,
-    weeklyProjection: w => `按当前节奏预计本周期总消耗 = 本次日均 × 7 天（${w.dailyPercent.toFixed(1)}%/天 × 7 ≈ ${w.projectedPercent.toFixed(0)}%）。超过 100% 表示照这个节奏额度会提前用完`,
+    weeklyProjection: w => `预计本周期总消耗 = 已用 ${w.percent}% + 预期日均 × 剩余天数。开周期 ≥2 天用当前节奏，刚重置时用历史日均（当前节奏外推无统计意义），无历史则假设不再消耗`,
     weeklyHistory: h => `平均每周消耗 = 近 ${h.cycles} 个完整周期「期末已用%」的均值（日均口径 = ${h.dailyPercent.toFixed(1)}%/天）。数据采样存于本地 ~/.zcas/quota-history.json，最多保留 13 个周期`,
     sessionExpired: '该账号的登录会话（oauth token）已在服务端过期，切换后 ZCode 会提示「套餐查询失败」。写代码不受影响（用的是长效凭证），需要点击「重新授权」刷新登录态',
 }

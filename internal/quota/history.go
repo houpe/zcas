@@ -510,27 +510,9 @@ func buildStats(acc *weeklyAccountHistory, l *CodingPlanLimit, now int64) *Weekl
 	end := toMs(l.NextReset)
 	st := &WeeklyStats{}
 	st.Monthly = buildMonthlyStat(acc.DailyCredits, l.Limit)
-	if end > 0 {
-		start := end - weekWindow.Milliseconds()
-		days := float64(now-start) / float64(dayMs)
-		if days < minDaysElapsed {
-			days = minDaysElapsed
-		}
-		if days > 7 {
-			days = 7
-		}
-		pct := float64(l.Percent)
-		daily := pct / days
-		st.Current = &WeeklyCurrentStat{
-			Start:            start,
-			End:              end,
-			DaysElapsed:      days,
-			Percent:          pct,
-			DailyPercent:     daily,
-			ProjectedPercent: daily * 7,
-		}
-	}
-	// 历史周期：优先用官方按天积分重建（采样开始之前的周也参与，立即有值）；
+
+	// 历史周期先算（历史日均是刚重置周期的投影基线）：
+	// 优先用官方按天积分重建（采样开始之前的周也参与，立即有值）；
 	// 无官方数据时回退到已跟踪的采样周期（期末已用% 口径）
 	var sum, sumPct float64
 	var n int
@@ -564,11 +546,45 @@ func buildStats(acc *weeklyAccountHistory, l *CodingPlanLimit, now int64) *Weekl
 			n++
 		}
 	}
+	histDaily := 0.0
 	if n > 0 {
+		histDaily = sum / float64(n)
 		st.Historical = &WeeklyHistoryStat{
 			Cycles:        n,
-			DailyPercent:  sum / float64(n),
+			DailyPercent:  histDaily,
 			WeeklyPercent: sumPct / float64(n),
+		}
+	}
+
+	if end > 0 {
+		start := end - weekWindow.Milliseconds()
+		days := float64(now-start) / float64(dayMs)
+		if days < minDaysElapsed {
+			days = minDaysElapsed
+		}
+		if days > 7 {
+			days = 7
+		}
+		pct := float64(l.Percent)
+		daily := pct / days
+		// 预计本周 = 已用% + 预期日均 × 剩余天数。
+		// 开周期不足 2 天时当前节奏无统计意义（刚重置就用了一点会外推出离谱值），
+		// 改用历史日均；无历史则假设剩余天数不再消耗（= 当前已用%）。
+		rate := daily
+		if days < 2 {
+			rate = histDaily
+		}
+		projected := pct + rate*(7-days)
+		if projected < pct {
+			projected = pct
+		}
+		st.Current = &WeeklyCurrentStat{
+			Start:            start,
+			End:              end,
+			DaysElapsed:      days,
+			Percent:          pct,
+			DailyPercent:     daily,
+			ProjectedPercent: projected,
 		}
 	}
 	return st

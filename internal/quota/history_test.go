@@ -388,6 +388,31 @@ func TestBuildMonthlyStat(t *testing.T) {
 	}
 }
 
+func TestProjectionFallsBackToHistoryWhenFresh(t *testing.T) {
+	useTempDataDir(t)
+	// 已完成周期（1 天前结束，期末 70%）→ 历史日均 10%/天
+	TrackWeekly("acc1", weeklyOV(70, 70, 100, time.Now().Add(-24*time.Hour).UnixMilli()))
+	// 当前周期刚过 0.5 天、已用 10%：当前节奏 20%/天 外推出 140% 属失真
+	end := time.Now().Add(156 * time.Hour).UnixMilli() // 剩 6.5 天
+	ov := weeklyOV(10, 10, 100, end)
+	TrackWeekly("acc1", ov)
+	c := ov.Weekly.Current
+	if c == nil {
+		t.Fatal("应有本次统计")
+	}
+	// 投影 = 已用 10 + 历史日均 10 × 剩 6.5 = 75（而非 10/0.5×7 = 140）
+	if c.ProjectedPercent < 74.9 || c.ProjectedPercent > 75.1 {
+		t.Errorf("刚重置时应按历史日均投影 75，got %v", c.ProjectedPercent)
+	}
+	// 本次日均仍如实显示（10/0.5 = 20）
+	if c.DailyPercent < 19.9 || c.DailyPercent > 20.1 {
+		t.Errorf("本次日均应 = 20，got %v", c.DailyPercent)
+	}
+	if ov.Weekly.Historical == nil || ov.Weekly.Historical.Cycles != 1 {
+		t.Errorf("应有一个跟踪历史周期，got %+v", ov.Weekly.Historical)
+	}
+}
+
 func TestToMs(t *testing.T) {
 	sec := time.Now().Unix()
 	if got := toMs(sec); got != sec*1000 {
